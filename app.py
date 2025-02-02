@@ -3,9 +3,7 @@ import telebot
 import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
-import base64
 from flask import Flask
-import threading
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -15,7 +13,7 @@ load_dotenv()
 
 # Configure environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-IMAGE_UPLOAD_API_KEY = os.getenv('IMAGE_UPLOAD_API_KEY')  # API key for the new image upload API
+IMAGE_UPLOAD_API_KEY = os.getenv('IMAGE_UPLOAD_API_KEY')
 MONGO_URI = os.getenv('MONGO_URI')
 DB_NAME = os.getenv('DB_NAME', 'image_uploads')
 COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'users')
@@ -33,13 +31,17 @@ def home():
 
 def upload_to_image_upload_api(image_data, delay=False, background=None, enhance=False, width=None, height=None):
     """
-    Upload image to the new image upload API and return the response.
+    Upload image to the image upload API and return the response.
     """
     url = "https://api.apilayer.com/image_upload/upload"
     
-    # Preparing payload with required and optional parameters
-    payload = {
-        "apikey": IMAGE_UPLOAD_API_KEY,
+    # Set headers with API key
+    headers = {
+        "apikey": IMAGE_UPLOAD_API_KEY
+    }
+    
+    # Prepare query parameters
+    params = {
         "delay": delay,
         "background": background,
         "enhance": enhance,
@@ -47,12 +49,12 @@ def upload_to_image_upload_api(image_data, delay=False, background=None, enhance
         "height": height
     }
     
-    # Sending the image as part of the body
+    # Send the image as a file upload
     files = {
-        'upload': ('image.jpg', image_data, 'image/jpeg')  # Adjust content type based on the image format
+        'image': ('image.jpg', image_data, 'image/jpeg')  # Changed field name to 'image'
     }
     
-    response = requests.post(url, params=payload, files=files)
+    response = requests.post(url, headers=headers, params=params, files=files)
     return response.json()
 
 @bot.message_handler(commands=['start'])
@@ -66,62 +68,59 @@ def send_welcome(message):
 @bot.message_handler(content_types=['photo'])
 def handle_image(message):
     try:
-        # Send processing message
         processing_msg = bot.reply_to(message, "📤 Processing your image...")
 
-        # Get the largest version of the photo
+        # Get the largest photo version
         file_id = message.photo[-1].file_id
         file_info = bot.get_file(file_id)
-        
-        # Download the image
         image_data = bot.download_file(file_info.file_path)
+
+        # Upload to image service
+        upload_response = upload_to_image_upload_api(image_data)
         
-        # Upload to the new Image Upload API
-        imgbb_response = upload_to_image_upload_api(image_data)
-        
-        if imgbb_response.get('success'):
-            # Extract relevant data from the response
-            data = imgbb_response['data']
-            image_url = data['image_url']
-            delete_url = data['delete_url']
-            
-            # Store in MongoDB
+        if upload_response.get('success'):
+            # Store data in MongoDB
             user_data = {
                 'user_id': message.from_user.id,
                 'username': message.from_user.username or "Unknown",
-                'image_url': image_url,
-                'delete_url': delete_url,
+                'image_url': upload_response['data']['image_url'],
+                'delete_url': upload_response['data'].get('delete_url', ''),
                 'timestamp': message.date
             }
             collection.insert_one(user_data)
-            
+
             # Send success message
-            success_message = (
+            success_msg = (
                 "✅ Image uploaded successfully!\n\n"
-                f"🔗 View your image: {image_url}\n\n"
+                f"🔗 View your image: {upload_response['data']['image_url']}\n\n"
                 "📎 You can now share this link with anyone!"
             )
             bot.edit_message_text(
-                success_message,
+                success_msg,
                 chat_id=processing_msg.chat.id,
                 message_id=processing_msg.message_id
             )
-            
         else:
-            raise Exception("Image upload failed")
-            
+            error_msg = "❌ Image upload failed. Please try again."
+            if 'error' in upload_response:
+                error_msg += f"\n\nError details: {upload_response['error']['message']}"
+            bot.edit_message_text(
+                error_msg,
+                chat_id=processing_msg.chat.id,
+                message_id=processing_msg.message_id
+            )
+
     except Exception as e:
-        error_message = f"❌ Sorry, an error occurred: {str(e)}"
         bot.edit_message_text(
-            error_message,
+            f"❌ Error: {str(e)}",
             chat_id=processing_msg.chat.id,
             message_id=processing_msg.message_id
         )
 
-def bot_polling():
-    print("🤖 Telegram Bot started polling...")
-    bot.infinity_polling(timeout=10)
+def run_bot():
+    bot.infinity_polling()
 
 if __name__ == "__main__":
-    # Run Flask server and the bot's polling in the same process (no threading)
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    # Run Flask and bot in separate threads
+    threading.Thread(target=run_bot).start()
+    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), use_reloader=False)
