@@ -1,8 +1,9 @@
+import os
 import telebot
 import requests
 import base64
-import os
 import dotenv
+from flask import Flask
 from pymongo import MongoClient
 
 # Load environment variables
@@ -13,18 +14,28 @@ MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME", "image_uploads")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "users")
 
+# Initialize Flask app
+app = Flask(__name__)
+
 # Initialize bot and database
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 client = MongoClient(MONGO_URI)
 db = client[DB_NAME]
 collection = db[COLLECTION_NAME]
 
+# Home route to check if the server is active
+@app.route('/')
+def home():
+    return "Hello, Active Server!"
+
+# Function to get user's IP address
 def get_ip():
     try:
         return requests.get("https://api64.ipify.org?format=json").json().get("ip")
     except:
         return "Unknown"
 
+# Handle incoming photo messages
 @bot.message_handler(content_types=['photo'])
 def handle_image(message):
     chat_id = message.chat.id
@@ -72,4 +83,10 @@ def handle_image(message):
     
     bot.send_message(chat_id, f"✅ Image uploaded successfully!\n🔗 {image_url}")
 
-bot.polling()
+# Run Flask app
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))  # Render provides a PORT environment variable
+    app.run(host="0.0.0.0", port=port)
+    
+    # Start bot polling in the background
+    bot.polling(non_stop=True)

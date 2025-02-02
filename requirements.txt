@@ -2,3 +2,4 @@ pyTelegramBotAPI==4.10.0
 requests==2.31.0
 pymongo==4.5.0
 python-dotenv==1.0.0
+Flask==2.2.3
