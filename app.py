@@ -15,7 +15,7 @@ load_dotenv()
 
 # Configure environment variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-IMGBB_API_KEY = os.getenv('IMGBB_API_KEY')
+IMAGE_UPLOAD_API_KEY = os.getenv('IMAGE_UPLOAD_API_KEY')  # API key for the new image upload API
 MONGO_URI = os.getenv('MONGO_URI')
 DB_NAME = os.getenv('DB_NAME', 'image_uploads')
 COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'users')
@@ -31,24 +31,35 @@ collection = db[COLLECTION_NAME]
 def home():
     return "Bot is active and running!"
 
-def upload_to_imgbb(image_data):
+def upload_to_image_upload_api(image_data, delay=False, background=None, enhance=False, width=None, height=None):
     """
-    Upload image to ImgBB and return the response
+    Upload image to the new image upload API and return the response.
     """
-    url = "https://api.imgbb.com/1/upload"
+    url = "https://api.apilayer.com/image_upload/upload"
+    
+    # Preparing payload with required and optional parameters
     payload = {
-        "key": IMGBB_API_KEY,
-        "image": base64.b64encode(image_data).decode('utf-8')
+        "apikey": IMAGE_UPLOAD_API_KEY,
+        "delay": delay,
+        "background": background,
+        "enhance": enhance,
+        "width": width,
+        "height": height
     }
     
-    response = requests.post(url, data=payload)
+    # Sending the image as part of the body
+    files = {
+        'upload': ('image.jpg', image_data, 'image/jpeg')  # Adjust content type based on the image format
+    }
+    
+    response = requests.post(url, params=payload, files=files)
     return response.json()
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     welcome_text = (
         "👋 Welcome to the Image Upload Bot!\n\n"
-        "Simply send me any image and I'll upload it to ImgBB for you."
+        "Simply send me any image and I'll upload it for you."
     )
     bot.reply_to(message, welcome_text)
 
@@ -57,7 +68,7 @@ def handle_image(message):
     try:
         # Send processing message
         processing_msg = bot.reply_to(message, "📤 Processing your image...")
-        
+
         # Get the largest version of the photo
         file_id = message.photo[-1].file_id
         file_info = bot.get_file(file_id)
@@ -65,13 +76,13 @@ def handle_image(message):
         # Download the image
         image_data = bot.download_file(file_info.file_path)
         
-        # Upload to ImgBB
-        imgbb_response = upload_to_imgbb(image_data)
+        # Upload to the new Image Upload API
+        imgbb_response = upload_to_image_upload_api(image_data)
         
         if imgbb_response.get('success'):
-            # Extract relevant data
+            # Extract relevant data from the response
             data = imgbb_response['data']
-            image_url = data['url']
+            image_url = data['image_url']
             delete_url = data['delete_url']
             
             # Store in MongoDB
@@ -97,7 +108,7 @@ def handle_image(message):
             )
             
         else:
-            raise Exception("ImgBB upload failed")
+            raise Exception("Image upload failed")
             
     except Exception as e:
         error_message = f"❌ Sorry, an error occurred: {str(e)}"
