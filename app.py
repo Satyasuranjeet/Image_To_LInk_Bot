@@ -6,7 +6,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -64,9 +63,8 @@ async def get_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sorry, I didn't understand that. Please send an image or use /start or /getlinks.")
 
-# Run Telegram bot
-def run_bot():
-    asyncio.set_event_loop(asyncio.new_event_loop())  # Ensure a new event loop for async bot
+# Run Telegram bot asynchronously
+async def run_bot():
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler('start', start))
@@ -75,8 +73,14 @@ def run_bot():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
     logging.info("Bot is running...")
-    app.run_polling()
+    await app.run_polling()
+
+# Run both Flask and Telegram Bot together
+async def main():
+    bot_task = asyncio.create_task(run_bot())  # Runs the Telegram bot asynchronously
+    flask_task = asyncio.to_thread(app.run, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))  # Runs Flask in a separate thread
+    await asyncio.gather(bot_task, flask_task)  # Runs both tasks concurrently
 
 if __name__ == "__main__":
-    Thread(target=run_bot).start()
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())  # Start the event loop
