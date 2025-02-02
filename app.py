@@ -1,72 +1,54 @@
 import os
 from telegram import Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from pymongo import MongoClient
 from dotenv import load_dotenv
-import requests
+from flask import Flask
 
 # Load environment variables
 load_dotenv()
 
-# MongoDB setup
-client = MongoClient(os.getenv("MONGO_URI"))
-db = client['telegram_bot']
-users_collection = db['users']
-
-# Telegram Bot Token
+# Your Telegram bot token from BotFather
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-# Function to handle start command
+# Initialize Flask app
+app = Flask(__name__)
+
+# Command to start the bot
 def start(update: Update, context: CallbackContext):
     user = update.message.from_user
-    update.message.reply_text(f"Hello {user.first_name}, I am your image upload bot. Send me an image!")
+    update.message.reply_text(f"Hello {user.first_name}, I'm your Python bot! How can I assist you today?")
 
-# Function to handle image uploads
-def handle_image(update: Update, context: CallbackContext):
-    user = update.message.from_user
-    file = update.message.photo[-1].get_file()
-    file_url = file.file_url
+# Command to echo the user's message
+def echo(update: Update, context: CallbackContext):
+    update.message.reply_text(update.message.text)
 
-    # Save the user data along with the image URL in MongoDB
-    users_collection.update_one(
-        {'user_id': user.id},
-        {'$set': {'username': user.username, 'image_url': file_url}},
-        upsert=True
-    )
+# Command for an example custom message
+def custom_message(update: Update, context: CallbackContext):
+    update.message.reply_text("This is a custom message!")
 
-    update.message.reply_text(f"Image uploaded! Here's your link: {file_url}")
+# Flask home route
+@app.route('/')
+def home():
+    return "Welcome to the Telegram Bot Home Page!"
 
-# Function to handle the command to get the generated image links
-def get_links(update: Update, context: CallbackContext):
-    user = update.message.from_user
-
-    # Query MongoDB for the user's data
-    user_data = users_collection.find_one({'user_id': user.id})
-    
-    if user_data and 'image_url' in user_data:
-        update.message.reply_text(f"Your uploaded image link: {user_data['image_url']}")
-    else:
-        update.message.reply_text("You have not uploaded any images yet.")
-
-# Function to handle unknown messages
-def handle_unknown(update: Update, context: CallbackContext):
-    update.message.reply_text("Sorry, I didn't understand that. Please send an image or use /start or /getlinks.")
-
-# Main function to set up the bot
+# Main function to set up the bot and Flask server
 def main():
-    # Set up the Updater and Dispatcher
+    # Set up the Updater and Dispatcher for the Telegram bot
     updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
     dispatcher = updater.dispatcher
 
-    # Handlers for commands and messages
+    # Add command handlers for Telegram Bot
     dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(CommandHandler('getlinks', get_links))
-    dispatcher.add_handler(MessageHandler(Filters.photo, handle_image))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_unknown))
+    dispatcher.add_handler(CommandHandler('custom', custom_message))
 
-    # Start polling for updates
+    # Add message handler for all text messages (echo functionality)
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, echo))
+
+    # Start the bot polling in the background
     updater.start_polling()
-    updater.idle()
+
+    # Start the Flask web server
+    app.run(port=5000)
 
 if __name__ == '__main__':
     main()
