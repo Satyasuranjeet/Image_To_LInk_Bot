@@ -31,12 +31,12 @@ collection = db[COLLECTION_NAME]
 def home():
     return "Bot is active and running!"
 
-def upload_to_image_upload_api(image_data, delay=False, background=None, enhance=False, width=None, height=None):
+def upload_to_image_upload_api(image_url, delay=False, background=None, enhance=False, width=None, height=None):
     """
-    Upload image to the new image upload API and return the response.
+    Upload image to the new image upload API via URL.
     """
     url = "https://api.apilayer.com/image_upload/upload"
-    
+
     # Preparing payload with required and optional parameters
     payload = {
         "apikey": IMAGE_UPLOAD_API_KEY,
@@ -44,15 +44,11 @@ def upload_to_image_upload_api(image_data, delay=False, background=None, enhance
         "background": background,
         "enhance": enhance,
         "width": width,
-        "height": height
+        "height": height,
+        "image_url": image_url  # Using URL instead of file data
     }
-    
-    # Sending the image as part of the body
-    files = {
-        'upload': ('image.jpg', image_data, 'image/jpeg')  # Adjust content type based on the image format
-    }
-    
-    response = requests.post(url, params=payload, files=files)
+
+    response = requests.post(url, params=payload)
     return response.json()
 
 @bot.message_handler(commands=['start'])
@@ -73,11 +69,11 @@ def handle_image(message):
         file_id = message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         
-        # Download the image
-        image_data = bot.download_file(file_info.file_path)
-        
-        # Upload to the new Image Upload API
-        imgbb_response = upload_to_image_upload_api(image_data)
+        # Get the file URL (Telegram API gives us a file path, convert it to a URL)
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_info.file_path}"
+
+        # Upload to the new Image Upload API using the file URL
+        imgbb_response = upload_to_image_upload_api(file_url)
         
         if imgbb_response.get('success'):
             # Extract relevant data from the response
