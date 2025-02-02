@@ -1,7 +1,6 @@
 import os
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext
-from telegram.ext.filters import Photo, Text
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
 from pymongo import MongoClient
 from dotenv import load_dotenv
 from flask import Flask
@@ -74,8 +73,8 @@ async def run_bot():
     # Handlers for commands and messages
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('getlinks', get_links))
-    application.add_handler(MessageHandler(Photo, handle_image))
-    application.add_handler(MessageHandler(Text & ~Command, handle_unknown))
+    application.add_handler(MessageHandler(filters.Photo, handle_image))  # Corrected usage of filters
+    application.add_handler(MessageHandler(filters.Text & ~filters.Command, handle_unknown))  # Corrected usage of filters
 
     # Start the bot polling
     await application.run_polling()
