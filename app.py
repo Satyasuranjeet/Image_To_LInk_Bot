@@ -34,22 +34,22 @@ def upload_to_image_upload_api(image_data):
     Modified to handle API parameters correctly
     """
     url = "https://api.apilayer.com/image_upload/upload"
-    
+
     headers = {
         "apikey": IMAGE_UPLOAD_API_KEY
     }
-    
+
     # Prepare form data parameters
     params = {
         "enhance": "true",  # API typically expects string values
         "delay": "false"
     }
-    
+
     files = {
         # Try different field names if this doesn't work
         'image': ('image.jpg', image_data, 'image/jpeg')
     }
-    
+
     try:
         response = requests.post(
             url,
@@ -72,26 +72,26 @@ def send_welcome(message):
 def handle_image(message):
     try:
         msg = bot.reply_to(message, "⏳ Processing your image...")
-        
+
         # Get image file
         file_id = message.photo[-1].file_id
         file_info = bot.get_file(file_id)
         image_data = bot.download_file(file_info.file_path)
-        
+
         # Upload to API
         result = upload_to_image_upload_api(image_data)
-        
-        if result.get('success'):
+
+        if isinstance(result, dict) and result.get('success'):
             # Store in database
             collection.insert_one({
                 "user_id": message.from_user.id,
-                "image_url": result['data']['image_url'],
+                "image_url": result.get('data', {}).get('image_url', ''),
                 "timestamp": message.date
             })
-            
+
             # Send response
             bot.edit_message_text(
-                f"✅ Upload successful!\n{result['data']['image_url']}",
+                f"✅ Upload successful!\n{result.get('data', {}).get('image_url', '')}",
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
@@ -102,7 +102,7 @@ def handle_image(message):
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
-            
+
     except Exception as e:
         bot.reply_to(message, f"🔥 Critical error: {str(e)}")
 
