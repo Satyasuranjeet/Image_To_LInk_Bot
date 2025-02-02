@@ -1,115 +1,72 @@
 import os
-import threading
-import telebot
-import requests
-from dotenv import load_dotenv
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from pymongo import MongoClient
-from flask import Flask
-
-# Initialize Flask app
-app = Flask(__name__)
+from dotenv import load_dotenv
+import requests
 
 # Load environment variables
 load_dotenv()
 
-# Configure environment variables
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-IMAGE_UPLOAD_API_KEY = os.getenv('IMAGE_UPLOAD_API_KEY')
-MONGO_URI = os.getenv('MONGO_URI')
-DB_NAME = os.getenv('DB_NAME', 'image_uploads')
-COLLECTION_NAME = os.getenv('COLLECTION_NAME', 'users')
+# MongoDB setup
+client = MongoClient(os.getenv("MONGO_URI"))
+db = client['telegram_bot']
+users_collection = db['users']
 
-# Initialize bot and database
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-client = MongoClient(MONGO_URI)
-db = client[DB_NAME]
-collection = db[COLLECTION_NAME]
+# Telegram Bot Token
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-@app.route('/')
-def home():
-    return "Bot is active and running!"
+# Function to handle start command
+def start(update: Update, context: CallbackContext):
+    user = update.message.from_user
+    update.message.reply_text(f"Hello {user.first_name}, I am your image upload bot. Send me an image!")
 
-def upload_to_image_upload_api(image_data):
-    """
-    Modified to handle API parameters correctly
-    """
-    url = "https://api.apilayer.com/image_upload/upload"
+# Function to handle image uploads
+def handle_image(update: Update, context: CallbackContext):
+    user = update.message.from_user
+    file = update.message.photo[-1].get_file()
+    file_url = file.file_url
 
-    headers = {
-        "apikey": IMAGE_UPLOAD_API_KEY
-    }
+    # Save the user data along with the image URL in MongoDB
+    users_collection.update_one(
+        {'user_id': user.id},
+        {'$set': {'username': user.username, 'image_url': file_url}},
+        upsert=True
+    )
 
-    # Prepare form data parameters
-    params = {
-        "enhance": "true",  # API typically expects string values
-        "delay": "false"
-    }
+    update.message.reply_text(f"Image uploaded! Here's your link: {file_url}")
 
-    files = {
-        # Try different field names if this doesn't work
-        'image': ('image.jpg', image_data, 'image/jpeg')
-    }
+# Function to handle the command to get the generated image links
+def get_links(update: Update, context: CallbackContext):
+    user = update.message.from_user
 
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            data=params,
-            files=files,
-            timeout=30
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        print(f"API Request Error: {str(e)}")
-        return {"success": False, "error": str(e)}
+    # Query MongoDB for the user's data
+    user_data = users_collection.find_one({'user_id': user.id})
+    
+    if user_data and 'image_url' in user_data:
+        update.message.reply_text(f"Your uploaded image link: {user_data['image_url']}")
+    else:
+        update.message.reply_text("You have not uploaded any images yet.")
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "👋 Welcome! Send me an image to upload.")
+# Function to handle unknown messages
+def handle_unknown(update: Update, context: CallbackContext):
+    update.message.reply_text("Sorry, I didn't understand that. Please send an image or use /start or /getlinks.")
 
-@bot.message_handler(content_types=['photo'])
-def handle_image(message):
-    try:
-        msg = bot.reply_to(message, "⏳ Processing your image...")
+# Main function to set up the bot
+def main():
+    # Set up the Updater and Dispatcher
+    updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+    dispatcher = updater.dispatcher
 
-        # Get image file
-        file_id = message.photo[-1].file_id
-        file_info = bot.get_file(file_id)
-        image_data = bot.download_file(file_info.file_path)
+    # Handlers for commands and messages
+    dispatcher.add_handler(CommandHandler('start', start))
+    dispatcher.add_handler(CommandHandler('getlinks', get_links))
+    dispatcher.add_handler(MessageHandler(Filters.photo, handle_image))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_unknown))
 
-        # Upload to API
-        result = upload_to_image_upload_api(image_data)
+    # Start polling for updates
+    updater.start_polling()
+    updater.idle()
 
-        if isinstance(result, dict) and result.get('success'):
-            # Store in database
-            collection.insert_one({
-                "user_id": message.from_user.id,
-                "image_url": result.get('data', {}).get('image_url', ''),
-                "timestamp": message.date
-            })
-
-            # Send response
-            bot.edit_message_text(
-                f"✅ Upload successful!\n{result.get('data', {}).get('image_url', '')}",
-                chat_id=msg.chat.id,
-                message_id=msg.message_id
-            )
-        else:
-            error = result.get('error', {}).get('message', 'Unknown error')
-            bot.edit_message_text(
-                f"❌ Upload failed: {error}",
-                chat_id=msg.chat.id,
-                message_id=msg.message_id
-            )
-
-    except Exception as e:
-        bot.reply_to(message, f"🔥 Critical error: {str(e)}")
-
-def run_bot():
-    print("🤖 Bot started polling...")
-    bot.infinity_polling()
-
-if __name__ == "__main__":
-    threading.Thread(target=run_bot).start()
-    app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)), use_reloader=False)
+if __name__ == '__main__':
+    main()
