@@ -1,10 +1,12 @@
 import os
+import logging
+import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from pymongo import MongoClient
 from dotenv import load_dotenv
-from urllib.parse import quote as url_quote  # ✅ Correct replacement for url_quote
+from threading import Thread
 
 # Load environment variables
 load_dotenv()
@@ -33,24 +35,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     file = await update.message.photo[-1].get_file()
-    file_url = file.file_path
 
-    # Save the user data along with the image URL in MongoDB
+    # Download the image locally
+    file_path = f"uploads/{user.id}_{file.file_id}.jpg"
+    os.makedirs("uploads", exist_ok=True)
+    await file.download(custom_path=file_path)
+
+    # Store the image reference in MongoDB
     users_collection.update_one(
         {'user_id': user.id},
-        {'$set': {'username': user.username, 'image_url': file_url}},
+        {'$set': {'username': user.username, 'image_path': file_path}},
         upsert=True
     )
 
-    await update.message.reply_text(f"Image uploaded! Here's your link: {file_url}")
+    await update.message.reply_text(f"Image uploaded! You can access it later using /getlinks.")
 
 # Function to retrieve stored image links
 async def get_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     user_data = users_collection.find_one({'user_id': user.id})
 
-    if user_data and 'image_url' in user_data:
-        await update.message.reply_text(f"Your uploaded image link: {user_data['image_url']}")
+    if user_data and 'image_path' in user_data:
+        await update.message.reply_text(f"Your uploaded image is stored at: {user_data['image_path']}")
     else:
         await update.message.reply_text("You have not uploaded any images yet.")
 
@@ -58,21 +64,19 @@ async def get_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Sorry, I didn't understand that. Please send an image or use /start or /getlinks.")
 
-# Main function to run the bot
+# Run Telegram bot
 def run_bot():
+    asyncio.set_event_loop(asyncio.new_event_loop())  # Ensure a new event loop for async bot
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
     app.add_handler(CommandHandler('start', start))
     app.add_handler(CommandHandler('getlinks', get_links))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_image))  # ✅ Corrected import
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))  # ✅ Corrected import
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_unknown))
 
-    print("Bot is running...")
+    logging.info("Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
-    from threading import Thread
-    
-    # Run Flask and Telegram bot simultaneously
     Thread(target=run_bot).start()
     app.run(host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
