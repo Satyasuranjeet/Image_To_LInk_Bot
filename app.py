@@ -35,6 +35,11 @@ def get_ip():
     except:
         return "Unknown"
 
+# Handle incoming /start command
+@bot.message_handler(commands=['start'])
+def start(message):
+    bot.send_message(message.chat.id, "Hello! Please send me an image to upload.")
+
 # Handle incoming photo messages
 @bot.message_handler(content_types=['photo'])
 def handle_image(message):
@@ -44,49 +49,57 @@ def handle_image(message):
     user_ip = get_ip()
     file_id = message.photo[-1].file_id
     
-    # Get the file path
-    file_info = bot.get_file(file_id)
-    file_path = file_info.file_path
+    # Send loading message to indicate processing
+    bot.send_message(chat_id, "🔄 Processing your image... Please wait.")
     
-    # Download the image
-    image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
-    response = requests.get(image_url)
+    try:
+        # Get the file path
+        file_info = bot.get_file(file_id)
+        file_path = file_info.file_path
+        
+        # Download the image
+        image_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+        response = requests.get(image_url)
+        
+        if response.status_code != 200:
+            bot.send_message(chat_id, "❌ Failed to download the image.")
+            return
+        
+        encoded_image = base64.b64encode(response.content).decode("utf-8")
+        
+        # Upload to ImgBB
+        img_response = requests.post(
+            "https://api.imgbb.com/1/upload",
+            data={"key": IMG_API_KEY, "image": encoded_image}
+        )
+        
+        if img_response.status_code != 200:
+            bot.send_message(chat_id, "❌ Image upload failed.")
+            return
+        
+        img_data = img_response.json().get("data")
+        image_url = img_data.get("url")
+        delete_url = img_data.get("delete_url")
+        
+        # Store in MongoDB
+        collection.insert_one({
+            "user_id": user_id,
+            "username": username,
+            "ip": user_ip,
+            "image_url": image_url,
+            "delete_url": delete_url
+        })
+        
+        # Send success message with the image URL
+        bot.send_message(chat_id, f"✅ Image uploaded successfully!\n🔗 {image_url}")
     
-    if response.status_code != 200:
-        bot.send_message(chat_id, "Failed to download the image.")
-        return
-    
-    encoded_image = base64.b64encode(response.content).decode("utf-8")
-    
-    # Upload to ImgBB
-    img_response = requests.post(
-        "https://api.imgbb.com/1/upload",
-        data={"key": IMG_API_KEY, "image": encoded_image}
-    )
-    
-    if img_response.status_code != 200:
-        bot.send_message(chat_id, "Image upload failed.")
-        return
-    
-    img_data = img_response.json().get("data")
-    image_url = img_data.get("url")
-    delete_url = img_data.get("delete_url")
-    
-    # Store in MongoDB
-    collection.insert_one({
-        "user_id": user_id,
-        "username": username,
-        "ip": user_ip,
-        "image_url": image_url,
-        "delete_url": delete_url
-    })
-    
-    bot.send_message(chat_id, f"✅ Image uploaded successfully!\n🔗 {image_url}")
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ An error occurred: {e}")
 
 # Run Flask app
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))  # Render provides a PORT environment variable
     app.run(host="0.0.0.0", port=port)
-    
+
     # Start bot polling in the background
     bot.polling(non_stop=True)
