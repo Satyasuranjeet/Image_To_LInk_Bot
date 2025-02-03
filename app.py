@@ -3,10 +3,9 @@ import os
 import pymongo
 import datetime
 import random
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, request
 from dotenv import load_dotenv
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
-import threading
 
 # Load environment variables
 load_dotenv()
@@ -15,6 +14,7 @@ TOKEN = os.getenv("TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "uploads")
 PORT = int(os.getenv("PORT", 5000))
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Set this to the URL where your app is deployed
 
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
@@ -104,20 +104,21 @@ def delete_image(message):
 def serve_image(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    if request.method == "POST":
+        json_str = request.get_data().decode("UTF-8")
+        update = telebot.types.Update.de_json(json_str)
+        bot.process_new_updates([update])
+        return "OK", 200
+
 @app.route("/")
 def home():
     return "Server is running! Telegram bot is active."
 
-# Run Flask app in a separate thread
-def run_flask():
-    app.run(host="0.0.0.0", port=PORT, debug=True)
-
-# Start the bot polling in a separate thread
-def run_telegram_bot():
-    bot.remove_webhook()  # Ensure that there are no conflicting webhooks
-    bot.polling(none_stop=True)
-
 if __name__ == "__main__":
-    # Start both Flask and bot in separate threads
-    threading.Thread(target=run_flask).start()
-    threading.Thread(target=run_telegram_bot).start()
+    # Set webhook for Telegram
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL + "/webhook")
+    
+    app.run(host="0.0.0.0", port=PORT, debug=True)
