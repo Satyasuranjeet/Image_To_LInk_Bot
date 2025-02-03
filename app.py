@@ -2,7 +2,8 @@ import telebot
 import os
 import pymongo
 import datetime
-from flask import Flask
+import random
+from flask import Flask, send_from_directory
 from dotenv import load_dotenv
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 
@@ -26,6 +27,10 @@ client = pymongo.MongoClient(MONGO_URI)
 db = client["telegram_bot"]
 collection = db["images"]
 
+# Generate a unique 4-digit ID
+def generate_unique_id():
+    return str(random.randint(1000, 9999))
+
 # Start command with options menu
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -40,8 +45,11 @@ def handle_image(message):
     file_info = bot.get_file(message.photo[-1].file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     
-    # Generate a unique filename
-    filename = f"{message.chat.id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+    # Generate a unique 4-digit ID for the image
+    unique_id = generate_unique_id()
+    
+    # Generate a filename using the ID and timestamp
+    filename = f"{unique_id}_{message.chat.id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     
     # Save the image locally
@@ -55,11 +63,14 @@ def handle_image(message):
         "first_name": message.chat.first_name,
         "last_name": message.chat.last_name,
         "file_path": file_path,
+        "image_id": unique_id,
         "timestamp": datetime.datetime.now()
     }
     collection.insert_one(image_data)
     
-    bot.reply_to(message, f"✅ Image saved locally at: {file_path}")
+    # Generate a public URL for the uploaded image
+    public_url = f"https://image-to-link-bot-ph5v.onrender.com/uploads/{filename}"
+    bot.reply_to(message, f"✅ Image saved successfully!\nPublic URL: {public_url}\nImage ID: {unique_id}")
 
 @bot.message_handler(func=lambda message: message.text == "📜 View My Images")
 def list_images(message):
@@ -67,24 +78,30 @@ def list_images(message):
     images = collection.find({"user_id": user_id})
     response = "🖼 Your uploaded images:\n"
     for img in images:
-        response += f"{img['file_path']}\n"
+        response += f"ID: {img['image_id']} - {img['file_path']}\n"
     bot.reply_to(message, response if response != "🖼 Your uploaded images:\n" else "No images found.")
 
 @bot.message_handler(func=lambda message: message.text == "🗑 Delete Image")
 def ask_delete_image(message):
-    bot.reply_to(message, "Please send the file path of the image you want to delete.")
+    bot.reply_to(message, "Please send the Image ID of the image you want to delete.")
 
-@bot.message_handler(func=lambda message: message.text.startswith("/delete") or os.path.exists(message.text))
+@bot.message_handler(func=lambda message: message.text.isdigit())
 def delete_image(message):
-    file_path = message.text.split(' ')[1] if message.text.startswith("/delete") else message.text
-    image_data = collection.find_one({"file_path": file_path, "user_id": message.chat.id})
+    image_id = message.text
+    image_data = collection.find_one({"image_id": image_id, "user_id": message.chat.id})
     if image_data:
+        file_path = image_data['file_path']
         if os.path.exists(file_path):
             os.remove(file_path)
-        collection.delete_one({"file_path": file_path})
-        bot.reply_to(message, "✅ Image deleted successfully.")
+        collection.delete_one({"image_id": image_id})
+        bot.reply_to(message, f"✅ Image with ID {image_id} deleted successfully.")
     else:
-        bot.reply_to(message, "⚠ Image not found.")
+        bot.reply_to(message, "⚠ Image ID not found or you do not have permission to delete it.")
+
+# Route to serve uploaded images
+@app.route('/uploads/<filename>')
+def serve_image(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)
 
 @app.route("/")
 def home():
