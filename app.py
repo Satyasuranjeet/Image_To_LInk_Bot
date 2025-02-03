@@ -6,6 +6,7 @@ import random
 from flask import Flask, send_from_directory
 from dotenv import load_dotenv
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
+import threading
 
 # Load environment variables
 load_dotenv()
@@ -107,8 +108,16 @@ def serve_image(filename):
 def home():
     return "Server is running! Telegram bot is active."
 
-if __name__ == "__main__":
-    import threading
-    bot_thread = threading.Thread(target=lambda: bot.polling(none_stop=True))
-    bot_thread.start()
+# Run Flask app in a separate thread
+def run_flask():
     app.run(host="0.0.0.0", port=PORT, debug=True)
+
+# Start the bot polling in a separate thread
+def run_telegram_bot():
+    bot.remove_webhook()  # Ensure that there are no conflicting webhooks
+    bot.polling(none_stop=True)
+
+if __name__ == "__main__":
+    # Start both Flask and bot in separate threads
+    threading.Thread(target=run_flask).start()
+    threading.Thread(target=run_telegram_bot).start()
